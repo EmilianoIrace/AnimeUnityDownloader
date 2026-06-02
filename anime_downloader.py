@@ -16,6 +16,7 @@ import logging
 import random
 import time
 from argparse import ArgumentParser
+from collections.abc import Callable
 from pathlib import Path
 
 import requests
@@ -26,6 +27,7 @@ from helpers.crawler.crawler import Crawler
 from helpers.crawler.crawler_utils import extract_download_link
 from helpers.download_utils import (
     get_episode_filename,
+    get_chunk_size,
     run_in_parallel,
     save_file_with_progress,
 )
@@ -37,12 +39,17 @@ from helpers.general_utils import (
 )
 from helpers.progress_utils import create_progress_bar, create_progress_table
 
+ProgressCallback = Callable[[dict], None]
+
 
 def download_episode(
     download_link: str,
     download_path: str,
     task_info: tuple,
     retries: int = 4,
+    episode_index: int = 0,
+    total_episodes: int = 0,
+    progress_callback: ProgressCallback | None = None,
 ) -> None:
     """Download an episode from the download link and provides progress updates."""
     for attempt in range(retries):
@@ -55,7 +62,31 @@ def download_episode(
 
             filename = get_episode_filename(download_link)
             final_path = Path(download_path) / filename
-            save_file_with_progress(response, final_path, task_info)
+
+            if progress_callback:
+                file_size = int(response.headers.get("Content-Length", -1))
+                chunk_size = get_chunk_size(file_size) if file_size > 0 else 1024 * 256
+                total_downloaded = 0
+                with Path(final_path).open("wb") as f:
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            f.write(chunk)
+                            total_downloaded += len(chunk)
+                            if file_size > 0:
+                                pct = round((total_downloaded / file_size) * 100, 1)
+                                progress_callback({
+                                    "event": "episode_progress",
+                                    "episode": episode_index,
+                                    "total": total_episodes,
+                                    "percent": pct,
+                                })
+                progress_callback({
+                    "event": "episode_done",
+                    "episode": episode_index,
+                    "total": total_episodes,
+                })
+            else:
+                save_file_with_progress(response, final_path, task_info)
             break
 
         except requests.RequestException:
@@ -64,27 +95,86 @@ def download_episode(
                 time.sleep(delay)
 
 
-def process_video_url(video_url: str, download_path: str, task_info: tuple) -> None:
+def process_video_url(
+    video_url: str,
+    download_path: str,
+    task_info: tuple,
+    episode_index: int = 0,
+    total_episodes: int = 0,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
     """Process an embed URL to extract episode download links."""
     soup = fetch_page(video_url)
     script_items = soup.find_all("script")
     download_link = extract_download_link(script_items, video_url)
-    download_episode(download_link, download_path, task_info)
+    download_episode(
+        download_link,
+        download_path,
+        task_info,
+        episode_index=episode_index,
+        total_episodes=total_episodes,
+        progress_callback=progress_callback,
+    )
 
 
-def download_anime(anime_name: str, video_urls: list[str], download_path: str) -> None:
+def _process_video_url_with_callback(
+    video_url: str,
+    download_path: str,
+    task_info: tuple,
+    episode_index: int,
+    total_episodes: int,
+    progress_callback: ProgressCallback,
+) -> None:
+    process_video_url(
+        video_url,
+        download_path,
+        task_info,
+        episode_index=episode_index,
+        total_episodes=total_episodes,
+        progress_callback=progress_callback,
+    )
+
+
+def download_anime(
+    anime_name: str,
+    video_urls: list[str],
+    download_path: str,
+    progress_callback: ProgressCallback | None = None,
+) -> None:
     """Download episodes of a specified anime from provided video URLs."""
-    job_progress = create_progress_bar()
-    progress_table = create_progress_table(anime_name, job_progress)
+    if progress_callback:
+        from concurrent.futures import ThreadPoolExecutor
+        from helpers.config import DOWNLOAD_WORKERS
 
-    with Live(progress_table, refresh_per_second=10):
-        run_in_parallel(process_video_url, video_urls, job_progress, download_path)
+        total = len(video_urls)
+        with ThreadPoolExecutor(max_workers=DOWNLOAD_WORKERS) as executor:
+            futures = [
+                executor.submit(
+                    _process_video_url_with_callback,
+                    url,
+                    download_path,
+                    (),
+                    idx + 1,
+                    total,
+                    progress_callback,
+                )
+                for idx, url in enumerate(video_urls)
+            ]
+            for f in futures:
+                f.result()
+    else:
+        job_progress = create_progress_bar()
+        progress_table = create_progress_table(anime_name, job_progress)
+        with Live(progress_table, refresh_per_second=10):
+            run_in_parallel(process_video_url, video_urls, job_progress, download_path)
 
 
 async def process_anime_download(
     url: str,
     start_episode: int | None = None,
     end_episode: int | None = None,
+    download_path: str | None = None,
+    progress_callback: ProgressCallback | None = None,
 ) -> None:
     """Process the download of an anime from the specified URL."""
     soup = fetch_page_httpx(url)
@@ -93,8 +183,8 @@ async def process_anime_download(
 
     try:
         anime_name = crawler.extract_anime_name(soup, url)
-        download_path = create_download_directory(anime_name)
-        download_anime(anime_name, video_urls, download_path)
+        resolved_path = create_download_directory(anime_name, base=download_path)
+        download_anime(anime_name, video_urls, resolved_path, progress_callback)
 
     except ValueError as val_err:
         message = f"Value error: {val_err}"

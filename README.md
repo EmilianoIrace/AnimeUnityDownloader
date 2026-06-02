@@ -6,6 +6,7 @@
 
 ## Features
 
+- **Graphical User Interface (GUI)** for easy downloading
 - Downloads multiple episodes concurrently.
 - Supports [batch downloading](https://github.com/Lysagxra/AnimeUnityDownloader?tab=readme-ov-file#batch-download) via a list of URLs.
 - Supports downloading a [specified range of episodes](https://github.com/Lysagxra/AnimeUnityDownloader?tab=readme-ov-file#single-anime-download).
@@ -33,8 +34,8 @@ project-root/
 - `requests` - for HTTP requests
 - `BeautifulSoup` (bs4) - for HTML parsing
 - `rich` - for progress display in terminal
-- `fake_useragent` - for generating fake user agents for web scraping
 - `httpx` - for making asynchronous HTTP requests
+- `cloudscraper` - fallback support for Cloudflare-protected requests
 
 ## Installation
 
@@ -50,11 +51,46 @@ git clone https://github.com/Lysagxra/AnimeUnityDownloader.git
 cd AnimeUnityDownloader
 ```
 
-3. Install the required dependencies:
+3. Create and activate a virtual environment:
 
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
 ```
+
+4. Install the required dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+## Usage
+
+### GUI Mode (Recommended)
+
+The easiest way to use the downloader is through the graphical interface:
+
+**Quick Start:**
+```bash
+./start.sh
+```
+
+Or manually:
+```bash
+python launch_gui.py
+```
+
+The launcher will automatically use the project's `.venv` when present, check the required dependencies, and open the GUI.
+
+**In the GUI you can:**
+
+1. Paste the anime URL
+2. Set the starting episode (default: 1)
+3. Set the ending episode (optional - leave empty for all episodes)
+4. Choose the download directory
+5. Click "Download" to start
+
+### Command Line Mode
 
 ## Single Anime Download
 

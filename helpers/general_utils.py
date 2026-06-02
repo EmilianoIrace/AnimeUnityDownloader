@@ -301,13 +301,14 @@ def sanitize_directory_name(directory_name: str) -> str:
     return re.sub(invalid_chars, "_", directory_name)
 
 
-def create_download_directory(directory_name: str) -> str:
+def create_download_directory(directory_name: str, base=None) -> str:
     """Create a directory for downloads if it doesn't exist."""
-    download_path = Path(DOWNLOAD_FOLDER) / sanitize_directory_name(directory_name)
+    root = Path(base) if base else Path(DOWNLOAD_FOLDER)
+    download_path = root / sanitize_directory_name(directory_name)
 
     try:
-        Path(download_path).mkdir(parents=True, exist_ok=True)
-        return download_path
+        download_path.mkdir(parents=True, exist_ok=True)
+        return str(download_path)
 
     except OSError as os_err:
         message = f"Error creating directory: {os_err}"
